@@ -1,0 +1,63 @@
+{% for region in regions %}
+provider "aws" {
+  alias = "{{ region.name }}"
+  region = "{{ region.name }}"
+  access_key = "${var.access_key}"
+  secret_key = "${var.secret_key}"
+}
+
+resource "aws_security_group" "socks4-{{ region.name }}" {
+  name = "socks4-{{ region.name }}"
+  description = "Allow ingress 1080, egress [0,65535]"
+  provider = "aws.{{ region.name }}"
+  ingress {
+    from_port = 1080
+    to_port = 1080
+    protocol = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port = 22
+    protocol = "tcp"
+    to_port = 22
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    from_port = 0
+    protocol = "tcp"
+    to_port = 65535
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_key_pair" "ssh-key-{{ region.name }}" {
+  provider = "aws.{{ region.name }}"
+  key_name = "ssh-key-{{ region.name }}"
+  public_key = "${file("${var.public_key_file}")}"
+}
+
+resource "aws_instance" "vm-{{ region.name }}" {
+  ami           = "{{ region.ami }}"
+  instance_type = "t2.nano"
+  provider = "aws.{{ region.name }}"
+  vpc_security_group_ids = ["${aws_security_group.socks4-{{ region.name }}.id}"]
+  key_name = "ssh-key-{{ region.name }}"
+  provisioner "local-exec" {
+    command = "echo socks4\t${aws_instance.vm-{{ region.name }}.public_ip}\t1080 >> ips.part"
+  }
+  provisioner "remote-exec" {
+    inline = [
+      "ssh-keygen -t rsa -N '' -f my.key",
+      "mkdir -p ~/.ssh",
+      "cat my.key.pub >> ~/.ssh/authorized_keys",
+      "nohup ssh -t -o StrictHostKeyChecking=no -N -D 0.0.0.0:1080 -i my.key localhost &",
+      "sleep 1s"
+    ]
+    connection {
+      user = "ubuntu"
+      type = "ssh"
+      private_key = "${file("~/.ssh/id_rsa")}"
+    }
+  }
+}
+{% endfor %}
